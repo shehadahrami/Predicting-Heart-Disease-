@@ -1,0 +1,211 @@
+import pandas as pd
+import requests
+import io
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import chi2
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import Normalizer
+from sklearn.preprocessing import Imputer
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import GridSearchCV
+import seaborn as sns
+
+#Get data into a dataframe
+filename = 'https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data'
+s = requests.get(filename).content
+columns = ['age','sex','chest_pain', 'resting_blood_pressure','chol','fbs','restecg','thalach','exang','oldpeak','slope','ca','thal','diagnosis']
+df = pd.read_csv(io.StringIO(s.decode('utf-8')), names= columns)
+
+hungarian = 'https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.hungarian.data'
+s = requests.get(hungarian).content
+df_hungarian = pd.read_csv(io.StringIO(s.decode('utf-8')), names= columns)
+
+
+switerland = 'https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.switzerland.data'
+s = requests.get(switerland).content
+df_switerland = pd.read_csv(io.StringIO(s.decode('utf-8')), names= columns)
+
+
+frames = [df,df_hungarian,df_switerland]
+
+new_df = pd.concat(frames)
+
+#Replace all ? with Nan, then remove all Nan
+new_df = new_df.replace('[?]', np.nan, regex=True  )
+
+
+imp = Imputer(missing_values="NaN", strategy='mean', axis=0)
+new_df = imp.fit_transform(new_df)
+new_df=pd.DataFrame(new_df,columns=columns)
+#new_df = new_df.dropna()
+new_df=new_df.astype(float)
+
+#cleaning up data
+new_df = new_df[new_df['resting_blood_pressure'] <=150]
+new_df = new_df[(new_df['fbs'] == 0 ) | (new_df['fbs'] == 1)]
+
+
+
+#X is set to the features, y is set to the output
+X = new_df.iloc[:,0:13]
+
+y = new_df.iloc[:,13]
+
+
+####Preprocessing data
+#Scale data
+min_max = MinMaxScaler()
+X = min_max.fit_transform(X)
+
+
+#Normalize data
+scaler = Normalizer().fit(X)
+normalizedX = scaler.transform(X)
+np.set_printoptions(precision=3)
+
+
+
+
+
+#Pick beast features in dataset
+selector = SelectKBest(chi2, k=9)
+X =selector.fit_transform(X,y)
+
+vector_names = list(new_df.columns[selector.get_support(indices=True)])
+print("most significant features: ", vector_names)
+
+
+#sns.pairplot(new_df, hue='diagnosis')
+#plt.show()
+
+def x_yplot(name1, name2):
+    plt.scatter(new_df[name1].iloc[0:148], new_df[name2].iloc[149:297])
+    plt.scatter(new_df[name1].iloc[0:148], new_df[name2].iloc[149:297])
+
+    plt.xlabel(name1)
+    plt.ylabel(name2)
+
+    plt.show()
+#x_yplot('exang','thalach')
+
+
+#split data into train_test
+X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=.25,random_state=50)
+
+
+#log reg model
+logreg = LogisticRegression(C=1.0, class_weight=None, dual=False, fit_intercept=True,
+          intercept_scaling=1, max_iter=10, multi_class='multinomial',
+          n_jobs=1, penalty='l2', random_state=None, solver='lbfgs',
+          tol=0.0001, verbose=0, warm_start=False)
+
+logreg.fit(X_train, y_train)
+
+y_pred = logreg.predict(X_test)
+print("Accuracy Score for a logistic Regression: ", accuracy_score(y_test,y_pred))
+
+cross_score_log = cross_val_score(logreg, X, y,cv=5)
+print(cross_score_log)
+print("Accuracy: %0.2f (+/- %0.2f)" % (cross_score_log.mean(), cross_score_log.std() * 2))
+
+
+table_log = pd.crosstab(y_test,y_pred, rownames=['Actual'], colnames=['Predicted'])
+print(table_log)
+
+print("")
+
+parameters = {'solver':('newton-cg', 'lbfgs', 'sag', 'saga'),'max_iter': (10,100,1000), 'multi_class':('ovr', 'multinomial') }
+clf = GridSearchCV(logreg, param_grid= parameters)
+clf.fit(X_train,y_train)
+
+print(clf.best_params_)
+
+print(clf.best_estimator_)
+
+
+
+plt.scatter(y_test, y_pred)
+plt.xlabel('True Values')
+plt.ylabel('Predictions')
+#plt.show()
+
+
+#KNN model
+score = []
+for k in range(1,100):
+    knn = KNeighborsClassifier(n_neighbors= k)
+    knn.fit(X_train,y_train)
+    knn_pred = knn.predict(X_test)
+    acc = accuracy_score(y_test,knn_pred)
+    score.append(acc)
+
+
+
+plt.plot(score)
+#plt.show()
+knn = KNeighborsClassifier(algorithm='brute', leaf_size=30, metric='minkowski',
+           metric_params=None, n_jobs=1, n_neighbors=8, p=2,
+           weights='distance')
+
+knn.fit(X_train,y_train)
+knn_pred = knn.predict(X_test)
+
+
+print("Accuracy Score for a KNN: ", accuracy_score(y_test,knn_pred))
+cross_score = cross_val_score(knn, X, y,cv=5)
+table_knn =pd.crosstab(y_test, knn_pred, rownames=['Actual'], colnames=['Predicted'])
+print (table_knn)
+
+
+print(cross_score)
+print("Accuracy: %0.2f (+/- %0.2f)" % (cross_score.mean(), cross_score.std() * 2))
+
+
+
+parameters_knn = {'n_neighbors':(1,2,3,4,5,6,7,8,9,10,11,20,100),'weights': ('uniform','distance'), 'algorithm':('auto', 'ball_tree', 'kd_tree', 'brute') }
+clf_knn = GridSearchCV(knn, param_grid= parameters_knn)
+clf_knn.fit(X_train,y_train)
+
+print(clf_knn.best_estimator_)
+print(clf_knn.best_params_)
+
+
+
+from sklearn.ensemble import RandomForestClassifier
+
+
+clf = RandomForestClassifier(n_estimators = 100,bootstrap=True, criterion='entropy',
+            max_depth=None, max_features='sqrt', max_leaf_nodes=None,
+            min_impurity_decrease=0.0, min_impurity_split=None,
+            min_samples_leaf=3, min_samples_split=3,
+            min_weight_fraction_leaf=0.0, n_jobs=10,
+            oob_score=False, random_state=None, verbose=0,
+            warm_start=False)
+clf.fit(X_train,y_train)
+
+clf_pred = clf.predict(X_test)
+
+
+
+
+
+print("")
+
+
+feature_importance = list(zip(columns, clf.feature_importances_))
+print(feature_importance)
+print("Accuracy Score for a RandomForestClassifier: ", accuracy_score(y_test,clf_pred))
+
+table =pd.crosstab(y_test, clf_pred, rownames=['Actual'], colnames=['Predicted'])
+print (table)
+cross_score_clf = cross_val_score(clf, X, y,cv=5)
+print(cross_score)
+print("Accuracy: %0.2f (+/- %0.2f)" % (cross_score_clf.mean(), cross_score_clf.std() * 2))
+
+print("")
